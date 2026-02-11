@@ -32,7 +32,7 @@
  *  Xmltemplate is created by: 
  *     .. using the browser's developer console. Manually place
  *     the correct blocks in the workspace and then, in the console, use:
- *     Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(Blockly.mainWorkspace))
+ *     Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(Blockly.getMainWorkspace()))
  *     to get the Xml code needed in the function.
 
  * Xmlgenerator is created by first writing the function in Javascript and
@@ -43,7 +43,7 @@
  *  in the blocks editor and then open the Developer console and type
  *  the command:
  * 
- * Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(Blockly.mainWorkspace))
+ * Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(Blockly.getMainWorkspace()))
  *
  * NOTE: The limitation here is that the solution must exactly match
  *     the user's input.
@@ -55,6 +55,7 @@
  */
 
 'use strict';
+
 
 //goog.require('Blockly.Quizme');
 
@@ -97,10 +98,255 @@ var maindocument = parent.document;
 var MAX_TRIES = 6;
 var answer_tries = 0;     //  How many wrong answers
 
+// This forces EVERY workspace to use our shim, even temporary ones created during XML parsing
+// Ensure Blockly.Quizme exists before we start adding to it
+Blockly.Quizme = Blockly.Quizme || {};
+
+/**
+ * THE REPAIR: This fixes the 'Click of undefined' error without breaking Blockly.hello
+ */
+function applyGlobalShim() {
+  if (Blockly.Workspace && !Blockly.Workspace.prototype.getComponentDatabase) {
+    Object.defineProperty(Blockly.Workspace.prototype, 'getComponentDatabase', {
+      value: function() { return dummyComponentDb; },
+      writable: true,
+      configurable: true
+    });
+  }
+  // Standard global aliases
+  Blockly.getComponentDatabase = function() { return dummyComponentDb; };
+  Blockly.ComponentDatabase = dummyComponentDb;
+}
+
+// Call it immediately
+applyGlobalShim();
+
+// RE-EXPOSE HELLO: Ensure this is explicitly attached to the global Blockly
+Blockly.hello = function(quizname) {
+  if (DEBUG) console.log("RAM: Blockly.hello called for " + quizname);
+  showQuiz(quizname);
+};
+
+
+
+// This makes the shim available to the internal blockly-all.js logic
+window.getComponentDatabase = function() { return dummyComponentDb; };
+Blockly.getComponentDatabase = function() { return dummyComponentDb; };
+Blockly.ComponentDatabase = dummyComponentDb;
+
+
+// --- SHIM START: FIX GENERATOR & VARIABLES ---
+
+// 1. Polyfill Blockly.mainWorkspace for old code compatibility
+if (!Blockly.mainWorkspace) {
+    Object.defineProperty(Blockly, 'mainWorkspace', {
+        get: function() { return Blockly.common.getMainWorkspace(); },
+        enumerable: true,
+        configurable: true
+    });
+}
+
+// 2. FULL OVERRIDE of allVariables
+// The old function in module_quizly.js crashes when passed a Workspace.
+// We replace it with a robust version that handles both Workspaces and Blocks.
+Blockly.Variables.allVariables = function(root) {
+    var target = root || Blockly.common.getMainWorkspace();
+    var variables = [];
+    var blocks = [];
+
+    // A. Determine how to get the list of blocks
+    if (target.getAllBlocks) {
+        // It is a Workspace (Modern or Old)
+        blocks = target.getAllBlocks();
+    } else if (target.getDescendants) {
+        // It is a Block
+        blocks = target.getDescendants();
+    } else if (target.getTopBlocks) {
+        // Fallback for some Workspace types
+        // true = include nested blocks
+        blocks = target.getTopBlocks(true); 
+    }
+
+    // B. Iterate blocks to find variable names
+    for (var i = 0; i < blocks.length; i++) {
+        var block = blocks[i];
+        if (block.getVars) {
+            var blockVars = block.getVars();
+            for (var j = 0; j < blockVars.length; j++) {
+                var varName = blockVars[j];
+                // Add unique variable names only
+                if (variables.indexOf(varName) === -1) {
+                    variables.push(varName);
+                }
+            }
+        }
+    }
+    return variables;
+};
+
+// 3. Fix workspaceToCode crash (Handle missing argument)
+// Old code calls workspaceToCode() with no args. New code requires workspaceToCode(workspace).
+var originalWorkspaceToCode = Blockly.JavaScript.workspaceToCode;
+Blockly.JavaScript.workspaceToCode = function(opt_workspace) {
+    // If no workspace provided, default to the main one
+    var workspace = opt_workspace || Blockly.common.getMainWorkspace();
+    
+    // Safety check: ensure it is actually a workspace object
+    if (!workspace || typeof workspace.getTopBlocks !== 'function') {
+        console.warn("workspaceToCode called with invalid workspace. Defaulting to main.");
+        workspace = Blockly.common.getMainWorkspace();
+    }
+
+    // Call the original function with the valid workspace
+    return originalWorkspaceToCode.call(this, workspace);
+};
+
+// --- SHIM CONTINUED ---
+
+// 4. Fix "Deprecated call..." (CORRECTED ORDER)
+var originalJsInit = Blockly.JavaScript.init;
+
+Blockly.JavaScript.init = function(opt_workspace) {
+  var workspace = opt_workspace || Blockly.common.getMainWorkspace();
+
+  // 1. Call original init FIRST (which might reset the nameDB_)
+  if (originalJsInit) {
+      originalJsInit.call(this, workspace);
+  }
+
+  // 2. Connect the name database to the map AFTERWARDS
+  // This ensures we attach to the active database instance.
+  if (this.nameDB_ && workspace) {
+    this.nameDB_.setVariableMap(workspace.getVariableMap());
+  }
+};
+
+// 5. Fix "Flydown" Crash (TypeError: Cannot read properties of null reading 'svgGroup_')
+// The "Flydown" (hover menu on variables) is broken in the new engine. 
+// We disable it here to prevent the crash.
+if (Blockly.FieldFlydown) {
+    Blockly.FieldFlydown.prototype.showFlydown_ = function() {
+        // Do nothing. This effectively disables the hover menu.
+        // You can still drag variable blocks from the toolbox.
+        return;
+    };
+}
+
+// 6. Fix "Dropdowns not setting value" (Permissive Validation)
+// This forces dropdowns to accept any value, even if the validator fails.
+if (Blockly.FieldDropdown) {
+    Blockly.FieldDropdown.prototype.doClassValidation_ = function(newValue) {
+        if (newValue === null || newValue === undefined) return null;
+        // Force acceptance of the value
+        return newValue;
+    };
+}
+
+// 7. Fix "Component Database" Crash (Button/Player errors)
+// The Flyout workspace needs a component database to render component blocks.
+// We patch the Workspace prototype to return a dummy DB if a real one is missing.
+// --- SHIM START ---
+// --- UPDATED ROBUST SHIM ---
+// --- THE "CLICK" ERROR FIX ---
+// Use 'var' so it is globally accessible to the Blockly core
+var dummyComponentDb = {
+  getComponentType: function(typeName) {
+    if (Blockly.ComponentTypes && Blockly.ComponentTypes[typeName]) {
+      return Blockly.ComponentTypes[typeName];
+    }
+    return { eventDictionary: {}, methodDictionary: {}, properties: {} };
+  },
+  getEventForType: function(typeName, eventName) {
+    var type = this.getComponentType(typeName);
+    if (type && type.eventDictionary && type.eventDictionary[eventName]) {
+      return type.eventDictionary[eventName];
+    }
+    return { name: eventName, parameters: [], typeName: typeName };
+  },
+  getMethodForType: function(typeName, methodName) {
+    var type = this.getComponentType(typeName);
+    if (type && type.methodDictionary && type.methodDictionary[methodName]) {
+      return type.methodDictionary[methodName];
+    }
+    return { name: methodName, parameters: [], typeName: typeName, returnType: 'any' };
+  },
+  getPropertyForType: function(typeName, propName) {
+    var type = this.getComponentType(typeName);
+    if (type && type.properties && type.properties[propName]) {
+      return type.properties[propName];
+    }
+    return { name: propName, type: 'any', writable: 'true' };
+  },
+  getType: function(instanceName) {
+    return instanceName ? instanceName.replace(/[0-9]/g, '') : '';
+  },
+  getComponentNamesByType: function(typeName) {
+    return [[typeName + "1", typeName + "1"]];
+  },
+
+  // FIX: Added the specific missing function from your error log
+  getInternationalizedEventDescription: function(name) { return name; },
+  
+  // FIX: Added the rest of the family to prevent the next errors
+  getInternationalizedEventName: function(name) { return name; },
+  getInternationalizedMethodName: function(name) { return name; },
+  getInternationalizedMethodDescription: function(name) { return name; },
+  getInternationalizedPropertyName: function(name) { return name; },
+  getInternationalizedPropertyDescription: function(name) { return name; },
+  getInternationalizedParameterName: function(name) { return name; },
+  getInternationalizedOptionName: function(key, name) { return name; },
+  
+  getOptionList: function(key) { return { options: [], tag: "" }; },
+  hasInstance: function(name) { return true; }
+};
+
+
+// CRITICAL: Global assignments for blockly-all.js
+Blockly.ComponentDatabase = dummyComponentDb;
+// Force some
+Blockly.getComponentDatabase = function() { return dummyComponentDb; };
+
+// App Inventor version of Blockly often looks here:
+if (!Blockly.common) Blockly.common = {};
+Blockly.common.getComponentDatabase = function() { return dummyComponentDb; };
+
+// And sometimes even here:
+window.getComponentDatabase = function() { return dummyComponentDb; };
+
+/**
+ * NEW LOGIC: This intercepts the workspace creation to ensure 
+ * the component database is ALWAYS present.
+ */
+(function() {
+  // If Blockly is already loaded
+  if (typeof Blockly !== 'undefined') {
+    // 1. Try prototype injection again with more targets
+    const targets = [Blockly.Workspace, Blockly.WorkspaceSvg, Blockly.WorkspaceHeadless];
+    targets.forEach(t => {
+      if (t && t.prototype) {
+        t.prototype.getComponentDatabase = function() { return dummyComponentDb; };
+      }
+    });
+
+    // 2. Wrap the injection method to catch new workspaces
+    const originalInject = Blockly.inject;
+    Blockly.inject = function(container, options) {
+      const workspace = originalInject.call(this, container, options);
+      // Manually attach to the instance immediately
+      workspace.getComponentDatabase = function() { return dummyComponentDb; };
+      return workspace;
+    };
+  }
+})();
+
+// --- SHIM END ---
+
+
+
 Blockly.hello = function(command, quizname) {
   if (DEBUG) console.log("RAM: Blockly says " + command);
   if (command == 'submit')
-    submitNewToggle();
+    submitNewToggle(quizname);
   else if (command == 'hint') 
     giveHint();
   else if (command == 'showquiz')
@@ -148,7 +394,7 @@ function createBogusParentFunctions() {
     } else {
       Blockly.WarningHandler.hideWarnings();
     }
-    Blockly.mainWorkspace.warningIndicator.updateWarningToggleText();
+    Blockly.getMainWorkspace().warningIndicator.updateWarningToggleText();
     return;
   }
 }
@@ -188,7 +434,7 @@ function initQuizme(quizname, quizmepath, arglist, quizdata) {
 
   // Do we want to hide the backpack?
   if (Blockly.Quizme.options['backpack'] == 'hidden') {
-    var bp = Blockly.mainWorkspace.backpack;
+    var bp = Blockly.getMainWorkspace().backpack;
     if (bp) {
       bp.svgGroup_.style.visibility="hidden"
     }
@@ -249,8 +495,12 @@ function initQuizme(quizname, quizmepath, arglist, quizdata) {
   // Initialize the structures that handles scoped variables
   Blockly.BlocklyEditor.startquizme();
   
-  // Display a quiz question
-  showQuiz(quizname);
+  // Display a quiz question with the most data we have
+  //showQuiz(quizdata || quizname);
+  // First question not loading, so we add a slight delay
+  setTimeout(function() {
+    showQuiz(quizdata || quizname);
+  }, 100);
 }
 
 /**
@@ -332,9 +582,9 @@ function showJavaScript() {
     if (answerType == "xml_blocks") {
 	window.parent.Alert.render("Sorry, Javascript code is not available \nfor this problem.");
     } else {
-      Blockly.JavaScript.init();
-      var  blocks  = Blockly.mainWorkspace.topBlocks_;
-      var code = Blockly.JavaScript.workspaceToCode('JavaScript');  
+      Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
+      var  blocks  = Blockly.getMainWorkspace().topBlocks_;
+      var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());  
       code = parseCode(code);
 
       console.log(code);
@@ -357,10 +607,45 @@ function showJavaScript() {
  * 
  * TODO: This function is too long. Break it up. 
  */
-function showQuiz(quizname) {
-  if (DEBUG) console.log("RAM: showQuiz " + quizname);
+/**
+ * showQuiz handles the display logic.
+ * @param {String|Object} quizIdentifier - Can be a name (String) or the full data (Object)
+ */
+function showQuiz(quizIdentifier) {
+  if (DEBUG) console.log("RAM: showQuiz() called with: ", quizIdentifier);
 
-  Blockly.mainWorkspace.clear();  // Do this first, before setting up built-ins and components.
+  var quizdata;
+  var quizname;
+
+  // 1. DETERMINE WHAT WAS PASSED
+  if (typeof quizIdentifier === 'string') {
+    quizname = quizIdentifier;
+    quizdata = Blockly.Quizme[quizIdentifier];
+  } else if (quizIdentifier && typeof quizIdentifier === 'object') {
+    quizdata = quizIdentifier;
+    // Try to find the name from the object if possible
+    quizname = quizdata.name || Blockly.Quizme.quizName; 
+  }
+
+  // 1.5 RE-SYNC: If the selector changed the quizname, we need the new quizdata
+  if (quizname && (!quizdata || quizdata !== Blockly.Quizme[quizname])) {
+    quizdata = Blockly.Quizme[quizname];
+  }
+
+  // 2. ERROR CHECK
+  if (!quizdata) {
+    console.error("showQuiz: Could not find quiz data for: ", quizIdentifier);
+    return;
+  }
+
+  // 3. SET GLOBALS (Required by renderQuiz's UI logic)
+  // Your renderQuiz function looks at Blockly.Quizme.quizName to update the UI
+  if (typeof quizIdentifier === 'string') {
+     Blockly.Quizme.quizName = quizIdentifier;
+  }
+
+
+  Blockly.getMainWorkspace().clear();  // Do this first, before setting up built-ins and components.
 
   var quiznames = Blockly.Quizme.quiznames;
 
@@ -414,10 +699,24 @@ function showQuiz(quizname) {
       Blockly.Quizme.VariableMappings = Blockly.Quizme[quizname].VariableMappings 
         = generateInstanceMappings(quizname, Blockly.Quizme);
     }
+    // Update the question for this quiz
+    Blockly.Quizme.question = quiz.question;
   }
 
   keepers = Blockly.Quizme[quizname].built_ins;
   components = Blockly.Quizme[quizname].components;
+
+  // NEW: Force the components to register with Blockly before customizing the toolbox
+  if (Blockly.Quizme.inputFromComponentsArray) {
+    Blockly.Quizme.inputFromComponentsArray(); 
+    if (DEBUG) console.log("RAM: Components re-initialized for toolbox.");
+  }
+
+  // This forces the component types to be parsed from JSON into Blockly.ComponentTypes
+  if (Blockly.Quizme.inputFromComponentsArray) {
+      Blockly.Quizme.inputFromComponentsArray();
+  }
+  
   customizeQuizmeLanguage(quizname, keepers, components);
 
   if (DEBUG) console.log("RAM: quizname = " + quizname);
@@ -440,7 +739,7 @@ function showQuiz(quizname) {
   Blockly.Quizme.resultHTML = Blockly.Quizme[quizname].result_html;
   Blockly.Quizme.hintCounter = 0;
   Blockly.Quizme.hints = Blockly.Quizme[quizname].hints;
-  Blockly.Quizme.solution = Blockly.Quizme[quizname].xmlsolution;
+  Blockly.Quizme.solution = Blockly.Quizme[quizname].Xmlsolution;
 
   // NOTE: Can eval be avoided here?
   Blockly.Quizme.xmlGenerator = eval( '(' + Blockly.Quizme[quizname].xmlgenerator + ')');
@@ -453,14 +752,14 @@ function showQuiz(quizname) {
     if (DEBUG) console.log("RAM: xml= " + xml);
   }
 
-  Blockly.Quizme.xml = Blockly.Xml.textToDom(xml);    
+  Blockly.Quizme.xml = Blockly.utils.xml.textToDom(xml);    
 
-  renderQuiz(); 
+  renderQuiz(quizdata); 
 
   // For boolean and numeric answer types, the solution has to be
   //  calculated after the blocks are rendered.
   if (Blockly.Quizme.answerType == 'boolean' || Blockly.Quizme.answerType == EVAL_EXPR) {
-    var block = Blockly.mainWorkspace.topBlocks_[0];
+    var block = Blockly.getMainWorkspace().topBlocks_[0];
     Blockly.Quizme.solution = "" + Blockly.Quizme.eval(block);
   }
 }
@@ -517,8 +816,8 @@ function initToolboxBuiltins(language, categories) {
 
     // Use a tempWorkspace so that procedure def blocks are not set to visible.
     var tempWorkspace = new Blockly.Workspace();
-    tempWorkspace.svgBlockCanvas_ = Blockly.mainWorkspace.getCanvas();
-    var blk = new Blockly.Block.obtain(tempWorkspace, propname);
+    tempWorkspace.svgBlockCanvas_ = Blockly.getMainWorkspace().getCanvas();
+    var blk = new Blockly.Block(tempWorkspace, propname);
 
     // If this block has a category, append the category name to category list.
     var catname = blk['category'];
@@ -603,7 +902,7 @@ function initToolboxLanguageTree(language, components) {
     treeString = treeString.concat("<category name='" + cat + "'>" + categories[cat] + "</category>");
   }
   treeString = treeString.concat("</xml>");
-  return Blockly.Xml.textToDom(treeString);
+  return Blockly.utils.xml.textToDom(treeString);
 }
 
 /**
@@ -665,12 +964,13 @@ function customizeQuizmeLanguage(quizname, keepers, components) {
   //  Blockly.Quizme.addComponents(components);
     
   // Delete the current toolbox tree (svg element) from the webpage.
-  var html = Blockly.Toolbox.HtmlDiv;
+  /* Commented out because errors in 2026
+  var html = Blockly.getMainWorkspace().toolbox.HtmlDiv;
   var children = html.childNodes;
   if (children[1])
     children[1].parentNode.removeChild(children[1]);
-
-  Blockly.Toolbox.init();
+ */
+  Blockly.getMainWorkspace().updateToolbox(Blockly.languageTree);
 }
 
 /**
@@ -688,8 +988,10 @@ function resetBlocklyLanguage() {
     block.setTooltip("");
   }
 
+  if (AI.Utilities && AI.Utilities.YailTypeToBlocklyType) 
+
   //  Blockly.Blocks.YailTypeToBlocklyTypeMap =
-  Blockly.Blocks.Utilities.YailTypeToBlocklyTypeMap =
+  AI.Utilities.YailTypeToBlocklyTypeMap =
     {
         'number':{input:"Number",output:["Number","String"]},
         'text':{input:"String",output:["Number","String"]},
@@ -703,9 +1005,10 @@ function resetBlocklyLanguage() {
     }
 
   //   Blockly.Blocks.YailTypeToBlocklyType = function(yail,inputOrOutput) {
-   Blockly.Blocks.Utilities.YailTypeToBlocklyType = function(yail,inputOrOutput) {
+  if (AI.Utilities && AI.Utilities.YailTypeToBlocklyType) 
+  AI.Utilities.YailTypeToBlocklyType = function(yail,inputOrOutput) {
      var inputOrOutputName = (inputOrOutput == Blockly.Blocks.OUTPUT ? "output" : "input");
-     var bType = Blockly.Blocks.Utilities.YailTypeToBlocklyTypeMap[yail][inputOrOutputName];
+     var bType = AI.Utilities.YailTypeToBlocklyTypeMap[yail][inputOrOutputName];
 
      if (bType != null || yail == 'any') {
        return bType;
@@ -764,58 +1067,79 @@ function resetComponentInstances() {
 /**
  * Displays the quiz in the browser.
  */
-function renderQuiz() {
+function renderQuiz(quizdata) {
   if (DEBUG) console.log("RAM: renderQuiz()");
-  Blockly.mainWorkspace.clear(); 
+
+  var workspace = Blockly.getMainWorkspace();
+  
+  // DEBUG PRINTS
+  console.log("RAM: --- Rendering Debug ---");
+  console.log("RAM: Workspace exists:", !!workspace);
+  console.log("RAM: Global ComponentDatabase exists:", !!Blockly.ComponentDatabase);
+  if (workspace) {
+     workspace.getComponentDatabase = function() { return dummyComponentDb; };
+     console.log("RAM: Database attached to workspace:", !!workspace.getComponentDatabase());
+  }
+  else return;
+  console.log("RAM: Testing shim manually for Button.Click:", 
+              dummyComponentDb.getEventForType("Button", "Click"));
+  // ...
+  // 1. ATTACH SHIM
+  workspace.getComponentDatabase = function() { return dummyComponentDb; };
+
+  // 2. RESOLVE DATA (The fix for the "Keys available" error)
+  var actualData = quizdata;
+
+  // If quizdata is the whole library (has many keys) or is missing Xmltemplate
+  if (quizdata && !quizdata.Xmltemplate && !quizdata.xmltemplate) {
+     var currentName = Blockly.Quizme.quizName;
+     if (quizdata[currentName]) {
+        actualData = quizdata[currentName];
+        if (DEBUG) console.log("RAM: Resolved actualData from library for: " + currentName);
+     }
+  }
+
+  // Fallback: If we still don't have data, check the global library
+  if (!actualData || (!actualData.Xmltemplate && !actualData.xmltemplate)) {
+    var quizName = Blockly.Quizme.quizName;
+    actualData = Blockly.Quizme[quizName];
+  }
+
+  if (!actualData) {
+    if (DEBUG) console.log("RAM: No valid quiz data found for " + Blockly.Quizme.quizName);
+    return;
+  }
+
+  // 3. UPDATE UI
   var quizquestion = maindocument.getElementById('quiz_question');
-  var quizName = Blockly.Quizme.quizName;
   if (quizquestion) {
-    quizquestion.innerHTML = mapQuizVariables(Blockly.Quizme, 
-        Blockly.Quizme.questionHTML, 
-        Blockly.Quizme[quizName].VariableMappings);  
-    quizquestion.style.backgroundColor = "#f3f0000";
-  }
-  var visibility = Blockly.Quizme.answerVisibility;
-  var quiz_answer = maindocument.getElementById('quiz_answer');
-  if (quiz_answer) {
-    quiz_answer.value = Blockly.Quizme.answerHTML;
-    quiz_answer.style.visibility = Blockly.Quizme.answerVisibility;
-    if (visibility == "visible") {
-      quiz_answer.hidden = false;
-    } else {
-      quiz_answer.hidden = true;
-    }
-  }
-  var quiz_result = maindocument.getElementById('quiz_result');
-  if (quiz_result)
-    quiz_result.innerHTML = Blockly.Quizme.resultHTML;
-  var hint_html = maindocument.getElementById('hint_html');
-  if (hint_html)
-    hint_html.innerHTML = "";
-
-  var link_html = maindocument.getElementById('link_html');
-  if (link_html) {
-    if (ED_X) {
-      link_html.style.visibility = "hidden";
-    } else if (Blockly.Quizme.description.indexOf("href") != -1) {  // Show only if there's href
-       link_html.innerHTML = "Tutorial: " + Blockly.Quizme.description;
-    } else {
-       link_html.innerHTML = "";
-    }
+    var mappings = actualData.VariableMappings || [];
+    var html = actualData.QuestionHTML || actualData.Questionhtml || actualData.question_html || "";
+    quizquestion.innerHTML = mapQuizVariables(Blockly.Quizme, html, mappings);  
   }
 
-  var xmlStr = Blockly.Xml.domToText(Blockly.Quizme.xml);
-  var mappedStr = mapQuizVariables(Blockly.Quizme, xmlStr, Blockly.Quizme.VariableMappings);
-  if (mappedStr)
-    Blockly.Xml.domToWorkspace(Blockly.mainWorkspace, Blockly.Xml.textToDom(mappedStr));
-  else 
-    Blockly.Xml.domToWorkspace(Blockly.mainWorkspace, Blockly.Quizme.xml);
+  // 4. GET XML TEXT
+  var xmlText = actualData.Xmltemplate || actualData.xmltemplate || actualData.xml;
+
+  // 5. RENDER
+  if (xmlText && xmlText !== "undefined") {
+    try {
+      var xmlDom = Blockly.utils.xml.textToDom(xmlText);
+      workspace.clear();
+      Blockly.Xml.domToWorkspace(xmlDom, workspace);
+      if (DEBUG) console.log("RAM: Blocks rendered successfully.");
+    } catch (e) {
+      console.error("RAM: Error parsing XML: ", e);
+    }
+  } else {
+    console.error("RAM: Missing XML in actualData object:", actualData);
+  }
 }
 
 /**
  * Handles the Submit/New Question toggle button.
  */
-function submitNewToggle() {
+function submitNewToggle(quizname) {
   if (DEBUG) console.log("RAM: submitNewToggle");
   var buttonLabel = maindocument.getElementById('submit_new_toggle').innerHTML;
   var result_element = maindocument.getElementById('quiz_result');
@@ -825,7 +1149,7 @@ function submitNewToggle() {
   } else if (buttonLabel == 'Submit') {
     Blockly.Quizme.evaluateUserAnswer();
   } else {
-    showQuiz();
+      showQuiz(quizname);
   }
 }
 
@@ -911,7 +1235,7 @@ Blockly.Quizme.giveFeedback = function(isCorrect, correctStr, mistakeStr, redo) 
     }
 
     // edX:  We save the workspace as a String
-    var wspace = Blockly.Xml.workspaceToDom(Blockly.mainWorkspace);
+    var wspace = Blockly.Xml.workspaceToDom(Blockly.getMainWorkspace());
     var wsStr = Blockly.Xml.domToText(wspace);
     if (ED_X) {
         console.log("RAM >>>>>>>>>>>>>> Quizme-helper updating edX state <<<<<<<<<<<<<<<<");
@@ -1011,7 +1335,7 @@ Blockly.Quizme.evaluateUserAnswer = function() {
     parent.document.getElementById('show_javascript').disabled = false;
     parent.document.getElementById('show_javascript').style.visibility = "visible";
   }
-  var wspace = Blockly.Xml.workspaceToDom(Blockly.mainWorkspace);
+  var wspace = Blockly.Xml.workspaceToDom(Blockly.getMainWorkspace());
   var wsStr = Blockly.Xml.domToText(wspace);
 
   return [result, wsStr];  // Return an array with True/False and workspace blocks
@@ -1033,7 +1357,7 @@ Blockly.Quizme.evaluateUserAnswer = function() {
  */
 Blockly.Quizme.evaluateXmlBlocksAnswerType = function(helperObj, solution, mappings) {
   if (DEBUG) console.log("RAM: evaluateXmlBlocksAnswerType");
-  var resultXml = Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(Blockly.mainWorkspace));
+  var resultXml = Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(Blockly.getMainWorkspace()));
   resultXml = Blockly.Quizme.removeXY(resultXml);
   resultXml = Blockly.Quizme.removeIDs(resultXml);
   resultXml = Blockly.Quizme.removeTag("xml", resultXml);
@@ -1128,10 +1452,10 @@ Blockly.Quizme.setupFunctionDefinition = function(qname, helperObj, blocks) {
   }
 
   // Get the workspace blocks and  definitions and convert it to code.
-  Blockly.JavaScript.init();
+  Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
   if (!blocks) 
-    blocks  = Blockly.mainWorkspace.topBlocks_;
-  var code = Blockly.JavaScript.workspaceToCode('JavaScript');  
+    blocks  = Blockly.getMainWorkspace().topBlocks_;
+  var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());  
   //  return code;
   var blockly_defs = Blockly.JavaScript.definitions_[fnName];
 
@@ -1326,10 +1650,10 @@ Blockly.Quizme.setupProcedureDefinition = function(qname, helperObj, blocks) {
   if (helperObj.procedure_inputs) {
     helperObj[qname].procedure_inputs = helperObj.procedure_inputs;
   }
-  Blockly.JavaScript.init();
+  Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
   if (!blocks)
-    blocks  = Blockly.mainWorkspace.topBlocks_;
-  var code = Blockly.JavaScript.workspaceToCode('JavaScript');
+    blocks  = Blockly.getMainWorkspace().topBlocks_;
+  var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());
   return code; 
 }
 
@@ -1527,8 +1851,8 @@ Blockly.Quizme.evaluateStatement = function(helperObj) {
   var globals = getGlobalVariableNames(answerCode);
 
   // Get the testcode from the workspace
-  Blockly.JavaScript.init()
-  var testCode = Blockly.JavaScript.workspaceToCode('JavaScript');
+  Blockly.JavaScript.init(Blockly.common.getMainWorkspace())
+  var testCode = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());
 
   testCode = "function test() { \n" + testCode + "\n var ret={";
   answerCode = "function test() { \n" + answerCode + "\n var ret={";

@@ -70,7 +70,7 @@ Blockly.Quizme.addComponents = function() {
  * Adds a prototype for a component defined by its JSON string.
  */
 Blockly.Quizme.addComponent = function(json, name, uid) {
-  if (DEBUG) console.log('RAM: addComponent json = ' + json);
+  //if (DEBUG) console.log('RAM: addComponent json = ' + json);
   var prototype = JSON.parse(json);
   var typeName = prototype.name;
 

@@ -101,6 +101,142 @@ var MAX_TRIES = 6;
 var answer_tries = 0;     //  How many wrong answers
 
 
+var dummyProcedureMap = {
+  // The blocks call this to see all available procedures for dropdowns
+  getProcedures: function() { return []; },
+  
+  // The blocks call this to get the menu items for the right-click menu
+  getMenuItems: function() { return []; },
+  
+  // Used to find a specific procedure by ID or Name
+  getProcedure: function(idOrName) { return null; },
+   deleteProcedure: function() {},
+
+  // --- NEW: These are required by the modern Observer pattern ---
+  add: function(procedure) { 
+    if (DEBUG) console.log("RAM: Procedure added to map");
+  },
+  remove: function(procedure) { 
+    if (DEBUG) console.log("RAM: Procedure removed from map");
+  },
+  clear: function() {},
+  
+  // The engine often checks for an "Observable" event system
+  fireChangeEvent: function() {
+    if (DEBUG) console.log("RAM: ProcedureMap change event fired");
+  }
+};
+
+// Fix "Component Database" Crash (Button/Player errors)
+// The Flyout workspace needs a component database to render component blocks.
+// We patch the Workspace prototype to return a dummy DB if a real one is missing.
+// --- SHIM START ---
+// --- UPDATED ROBUST SHIM ---
+// --- THE "CLICK" ERROR FIX ---
+// Use 'var' so it is globally accessible to the Blockly core
+
+var dummyComponentDb = {
+  getComponentType: function(typeName) {
+    if (Blockly.ComponentTypes && Blockly.ComponentTypes[typeName]) {
+      return Blockly.ComponentTypes[typeName];
+    }
+    return { eventDictionary: {}, methodDictionary: {}, properties: {} };
+  },
+  getEventForType: function(typeName, eventName) {
+    var type = this.getComponentType(typeName);
+    if (type && type.eventDictionary && type.eventDictionary[eventName]) {
+      return type.eventDictionary[eventName];
+    }
+    return { name: eventName, parameters: [], typeName: typeName };
+  },
+  getMethodForType: function(typeName, methodName) {
+    var type = this.getComponentType(typeName);
+    if (type && type.methodDictionary && type.methodDictionary[methodName]) {
+      return type.methodDictionary[methodName];
+    }
+    return { name: methodName, parameters: [], typeName: typeName, returnType: 'any' };
+  },
+   // NEW: The engine uses this to populate property dropdowns
+  getSetterNamesForType: function(typeName) {
+    var type = this.getComponentType(typeName);
+    return (type && type.setPropertyList) ? type.setPropertyList : [];
+  },
+
+  getGetterNamesForType: function(typeName) {
+    var type = this.getComponentType(typeName);
+    return (type && type.getPropertyList) ? type.getPropertyList : [];
+  },
+
+  getPropertyForType: function(typeName, propName) {
+  var type = this.getComponentType(typeName);
+  if (!type || !type.properties) return { name: propName, type: 'any' };
+
+  // 1. Direct match (Case Sensitive)
+  if (type.properties[propName]) {
+    return type.properties[propName];
+  }
+
+  // 2. Case-Insensitive Match (e.g., BackgroundColor vs backgroundColor)
+  var searchName = propName.toLowerCase();
+  for (var key in type.properties) {
+    if (key.toLowerCase() === searchName) {
+      return type.properties[key];
+    }
+  }
+
+  // 3. Fallback: Return a dummy object so the renderer doesn't crash
+  if (DEBUG) console.warn("RAM: Property fallback used for: " + typeName + "." + propName);
+  return {
+    name: propName,
+    type: 'any',
+    rw: 'read-write'
+  };
+},
+  getType: function(instanceName) {
+    return instanceName ? instanceName.replace(/[0-9]/g, '') : '';
+  },
+  getComponentNamesByType: function(typeName) {
+    return [[typeName + "1", typeName + "1"]];
+  },
+
+  // Ensure these return localized names if asked (fallback to key)
+  getInternationalizedPropertyName: function(typeName, propName) {
+    return propName;
+  },
+  
+  // FIX: Added the rest of the family to prevent the next errors  
+  getInternationalizedEventName: function(name) { return name; },
+  getInternationalizedMethodName: function(name) { return name; },
+  getInternationalizedMethodDescription: function(name) { return name; },
+  getInternationalizedPropertyDescription: function(name) { return name; },
+  getInternationalizedParameterName: function(name) { return name; },
+  getInternationalizedOptionName: function(key, name) { return name; },
+  getInternationalizedEventDescription: function(name) { return name; },
+  getOptionList: function(key) { return { options: [], tag: "" }; },
+  hasInstance: function(name) { return true; 
+  }
+};
+
+
+// CRITICAL: Global assignments for blockly-all.js
+Blockly.ComponentDatabase = dummyComponentDb;
+// Force some
+Blockly.getComponentDatabase = function() { return dummyComponentDb; };
+
+// App Inventor version of Blockly often looks here:
+if (!Blockly.common) Blockly.common = {};
+Blockly.common.getComponentDatabase = function() { return dummyComponentDb; };
+
+// And sometimes even here:
+window.getComponentDatabase = function() { return dummyComponentDb; };
+
+// 2. NOW APPLY THE SHIMS (The code that was crashing before)
+Blockly.getProcedureMap = function() { return dummyProcedureMap; };
+Blockly.getProcedureManager = function() { return dummyProcedureMap; };
+Blockly.ProcedureMap = dummyProcedureMap;
+
+
+
 
 /**
  * THE REPAIR: Ensures any object (Block or Workspace) that needs the 
@@ -292,106 +428,7 @@ if (Blockly.FieldDropdown) {
     };
 }
 
-// 7. Fix "Component Database" Crash (Button/Player errors)
-// The Flyout workspace needs a component database to render component blocks.
-// We patch the Workspace prototype to return a dummy DB if a real one is missing.
-// --- SHIM START ---
-// --- UPDATED ROBUST SHIM ---
-// --- THE "CLICK" ERROR FIX ---
-// Use 'var' so it is globally accessible to the Blockly core
-var dummyComponentDb = {
-  getComponentType: function(typeName) {
-    if (Blockly.ComponentTypes && Blockly.ComponentTypes[typeName]) {
-      return Blockly.ComponentTypes[typeName];
-    }
-    return { eventDictionary: {}, methodDictionary: {}, properties: {} };
-  },
-  getEventForType: function(typeName, eventName) {
-    var type = this.getComponentType(typeName);
-    if (type && type.eventDictionary && type.eventDictionary[eventName]) {
-      return type.eventDictionary[eventName];
-    }
-    return { name: eventName, parameters: [], typeName: typeName };
-  },
-  getMethodForType: function(typeName, methodName) {
-    var type = this.getComponentType(typeName);
-    if (type && type.methodDictionary && type.methodDictionary[methodName]) {
-      return type.methodDictionary[methodName];
-    }
-    return { name: methodName, parameters: [], typeName: typeName, returnType: 'any' };
-  },
-  getPropertyForType: function(typeName, propName) {
-  var type = this.getComponentType(typeName);
-  if (!type || !type.properties) return { name: propName, type: 'any' };
 
-  // 1. Direct match (Case Sensitive)
-  if (type.properties[propName]) {
-    return type.properties[propName];
-  }
-
-  // 2. Case-Insensitive Match (e.g., BackgroundColor vs backgroundColor)
-  var searchName = propName.toLowerCase();
-  for (var key in type.properties) {
-    if (key.toLowerCase() === searchName) {
-      return type.properties[key];
-    }
-  }
-
-  // 3. Fallback: Return a dummy object so the renderer doesn't crash
-  if (DEBUG) console.warn("RAM: Property fallback used for: " + typeName + "." + propName);
-  return {
-    name: propName,
-    type: 'any',
-    rw: 'read-write'
-  };
-},
-  getType: function(instanceName) {
-    return instanceName ? instanceName.replace(/[0-9]/g, '') : '';
-  },
-  getComponentNamesByType: function(typeName) {
-    return [[typeName + "1", typeName + "1"]];
-  },
-// NEW: Added to fix the property dropdown crash
-  getSetterNamesForType: function(typeName) {
-    var type = this.getComponentType(typeName);
-    return (type && type.setPropertyList) ? type.setPropertyList : [];
-  },
-
-  getGetterNamesForType: function(typeName) {
-    var type = this.getComponentType(typeName);
-    return (type && type.getPropertyList) ? type.getPropertyList : [];
-  },
-
-  // Ensure these return localized names if asked (fallback to key)
-  getInternationalizedPropertyName: function(typeName, propName) {
-    return propName;
-  },
-  
-  // FIX: Added the rest of the family to prevent the next errors
-  getInternationalizedEventName: function(name) { return name; },
-  getInternationalizedMethodName: function(name) { return name; },
-  getInternationalizedMethodDescription: function(name) { return name; },
-  getInternationalizedPropertyName: function(name) { return name; },
-  getInternationalizedPropertyDescription: function(name) { return name; },
-  getInternationalizedParameterName: function(name) { return name; },
-  getInternationalizedOptionName: function(key, name) { return name; },
-  getInternationalizedEventDescription: function(name) { return name; },
-  getOptionList: function(key) { return { options: [], tag: "" }; },
-  hasInstance: function(name) { return true; }
-};
-
-
-// CRITICAL: Global assignments for blockly-all.js
-Blockly.ComponentDatabase = dummyComponentDb;
-// Force some
-Blockly.getComponentDatabase = function() { return dummyComponentDb; };
-
-// App Inventor version of Blockly often looks here:
-if (!Blockly.common) Blockly.common = {};
-Blockly.common.getComponentDatabase = function() { return dummyComponentDb; };
-
-// And sometimes even here:
-window.getComponentDatabase = function() { return dummyComponentDb; };
 
 /**
  * NEW LOGIC: This intercepts the workspace creation to ensure 
@@ -419,6 +456,19 @@ window.getComponentDatabase = function() { return dummyComponentDb; };
   }
 })();
 
+// Bridge the old generator name to the new one
+if (!Blockly.JavaScript && typeof javascriptGenerator !== 'undefined') {
+    Blockly.JavaScript = javascriptGenerator;
+} else if (!Blockly.JavaScript && Blockly.Generator && Blockly.Generator.get('JavaScript')) {
+    Blockly.JavaScript = Blockly.Generator.get('JavaScript');
+}
+
+// Safety check for workspaceToCode specifically
+if (Blockly.JavaScript) {
+    if (DEBUG) console.log("RAM: JavaScript generator linked successfully.");
+} else {
+    console.error("RAM: ERROR - JavaScript generator NOT found. Checks may fail.");
+}
 // --- SHIM END ---
 
 
@@ -475,7 +525,7 @@ function createBogusParentFunctions() {
  * @param arglist, the list of GET args passed, e.g., 'quizname=name&selector=hidden&backpack=hidden
  */
 function initQuizme(quizname, quizmepath, arglist, quizdata) {
-  if (DEBUG) console.log("RAM initQuizme quizdata " + quizdata);
+  //if (DEBUG) console.log("RAM initQuizme quizdata " + quizdata);
   if (DEBUG) console.log("RAM: initializing ... quizname= " + quizname + " path=" + quizmepath + " arglist = " + arglist);
 
   createBogusParentFunctions();   // To handle translation
@@ -1165,14 +1215,10 @@ function renderQuiz(quizdata) {
   // --- 1. THE HANDSHAKE (Fixes the crash) ---
   // We attach these IMMEDIATELY so that no console.log or block-init can fail.
   workspace.getComponentDatabase = function() { return dummyComponentDb; };
-  workspace.getProcedureMap = function() {
-    return {
-      getMenuItems: function() { return []; },
-      getProcedures: function() { return []; },
-      getProcedure: function() { return null; },
-      deleteProcedure: function() {}
-    };
-  };
+  workspace.getProcedureMap = function() { return dummyProcedureMap; };
+  workspace.getProcedureManager = function() { return dummyProcedureMap; };
+
+
   workspace.getWarningHandler = function() {
     return {
       checkErrors: function() { return []; },
@@ -1219,6 +1265,9 @@ function renderQuiz(quizdata) {
 
   // --- 5. RENDER ---
   var xmlText = actualData.Xmltemplate || actualData.xmltemplate || actualData.xml;
+// Force the instance to have the database the MIT code expects
+workspace.getComponentDatabase = function() { return dummyComponentDb; };
+workspace.getProcedureMap = function() { return dummyProcedureMap; };
   if (xmlText && xmlText !== "undefined") {
     try {
       var xmlDom = Blockly.utils.xml.textToDom(xmlText);

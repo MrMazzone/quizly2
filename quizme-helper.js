@@ -284,6 +284,11 @@ Blockly.ProcedureMap = dummyProcedureMap;
         }
     }
 
+    // Stub App Inventor admin check used by context menu items
+    if (!window.parent.BlocklyPanel_checkIsAdmin) {
+        window.parent.BlocklyPanel_checkIsAdmin = function() { return false; };
+    }
+
     if (typeof Blockly !== 'undefined' && Blockly.Workspace) {
         // SHIM THE PROCEDURE DATABASE
         // This prevents the 'getMenuItems' crash on procedure call blocks
@@ -458,6 +463,10 @@ if (Blockly.FieldDropdown) {
       const workspace = originalInject.call(this, container, options);
       // Manually attach to the instance immediately
       workspace.getComponentDatabase = function() { return dummyComponentDb; };
+      // Initialize the procedure database (required by procedure call blocks)
+      if (Blockly.ProcedureDatabase && !workspace.procedureDb_) {
+        workspace.procedureDb_ = new Blockly.ProcedureDatabase(workspace);
+      }
       return workspace;
     };
   }
@@ -708,7 +717,7 @@ function showJavaScript() {
 	window.parent.Alert.render("Sorry, Javascript code is not available \nfor this problem.");
     } else {
       Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
-      var  blocks  = Blockly.getMainWorkspace().topBlocks_;
+      var  blocks  = Blockly.getMainWorkspace().getTopBlocks(false);
       var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());  
       code = parseCode(code);
 
@@ -871,7 +880,7 @@ function showQuiz(quizIdentifier) {
   Blockly.Quizme.resultHTML = Blockly.Quizme[quizname].result_html;
   Blockly.Quizme.hintCounter = 0;
   Blockly.Quizme.hints = Blockly.Quizme[quizname].hints;
-  Blockly.Quizme.solution = Blockly.Quizme[quizname].Xmlsolution;
+  Blockly.Quizme.solution = Blockly.Quizme[quizname].xmlsolution;
 
   // NOTE: Can eval be avoided here?
   Blockly.Quizme.xmlGenerator = eval( '(' + Blockly.Quizme[quizname].xmlgenerator + ')');
@@ -891,7 +900,7 @@ function showQuiz(quizIdentifier) {
   // For boolean and numeric answer types, the solution has to be
   //  calculated after the blocks are rendered.
   if (Blockly.Quizme.answerType == 'boolean' || Blockly.Quizme.answerType == EVAL_EXPR) {
-    var block = Blockly.getMainWorkspace().topBlocks_[0];
+    var block = Blockly.getMainWorkspace().getTopBlocks(false)[0];
     Blockly.Quizme.solution = "" + Blockly.Quizme.eval(block);
   }
 }
@@ -1529,6 +1538,10 @@ Blockly.Quizme.evaluateXmlBlocksAnswerType = function(helperObj, solution, mappi
   // HACK:  Replace 'logic_false' with logic_boolean' in user's answer
   resultXml = Blockly.Quizme.falseToBoolean(resultXml);
 
+  // New Blockly adds xmlns and is_generic attributes to mutation elements
+  // that old solution XML doesn't have. Strip them for comparison.
+  resultXml = Blockly.Quizme.normalizeMutationAttrs(resultXml);
+
   if (mappings) {
     solution = mapQuizVariables(helperObj, solution, mappings);
   } else if (helperObj[helperObj.quizName].dictionary) {
@@ -1538,6 +1551,7 @@ Blockly.Quizme.evaluateXmlBlocksAnswerType = function(helperObj, solution, mappi
   solution = Blockly.Quizme.removeXY(solution);
   solution = Blockly.Quizme.removeIDs(solution);
   solution = Blockly.Quizme.removeTag("xml", solution);
+  solution = Blockly.Quizme.normalizeMutationAttrs(solution);
 
   var result = resultXml.indexOf(solution) != -1;
   Blockly.Quizme.giveFeedback(result, 
@@ -1618,7 +1632,7 @@ Blockly.Quizme.setupFunctionDefinition = function(qname, helperObj, blocks) {
   // Get the workspace blocks and  definitions and convert it to code.
   Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
   if (!blocks) 
-    blocks  = Blockly.getMainWorkspace().topBlocks_;
+    blocks  = Blockly.getMainWorkspace().getTopBlocks(false);
   var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());  
   //  return code;
   var blockly_defs = Blockly.JavaScript.definitions_[fnName];
@@ -1816,7 +1830,7 @@ Blockly.Quizme.setupProcedureDefinition = function(qname, helperObj, blocks) {
   }
   Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
   if (!blocks)
-    blocks  = Blockly.getMainWorkspace().topBlocks_;
+    blocks  = Blockly.getMainWorkspace().getTopBlocks(false);
   var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());
   return code; 
 }
@@ -2082,6 +2096,19 @@ Blockly.Quizme.removeIDs = function(str) {
   }
   return str;
 }
+
+/**
+ * Strips xmlns and is_generic attributes from mutation elements.
+ * The new Blockly adds these attributes but old solution XML doesn't have them.
+ */
+Blockly.Quizme.normalizeMutationAttrs = function(str) {
+  if (!str || typeof str !== 'string') return str;
+  str = str.replace(/ xmlns="http:\/\/www\.w3\.org\/1999\/xhtml"/g, '');
+  str = str.replace(/ is_generic="false"/g, '');
+  // New Blockly omits inline attributes at default values, but old solution XML has them
+  str = str.replace(/ inline="(true|false)"/g, '');
+  return str;
+};
 
 /**
  * HACK: Replace logic_false with logic_boolean

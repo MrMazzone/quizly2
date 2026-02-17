@@ -458,6 +458,10 @@ if (Blockly.FieldDropdown) {
       const workspace = originalInject.call(this, container, options);
       // Manually attach to the instance immediately
       workspace.getComponentDatabase = function() { return dummyComponentDb; };
+      // Initialize the procedure database (required by procedure call blocks)
+      if (Blockly.ProcedureDatabase && !workspace.procedureDb_) {
+        workspace.procedureDb_ = new Blockly.ProcedureDatabase(workspace);
+      }
       return workspace;
     };
   }

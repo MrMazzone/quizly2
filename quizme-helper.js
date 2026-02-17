@@ -284,6 +284,11 @@ Blockly.ProcedureMap = dummyProcedureMap;
         }
     }
 
+    // Stub App Inventor admin check used by context menu items
+    if (!window.parent.BlocklyPanel_checkIsAdmin) {
+        window.parent.BlocklyPanel_checkIsAdmin = function() { return false; };
+    }
+
     if (typeof Blockly !== 'undefined' && Blockly.Workspace) {
         // SHIM THE PROCEDURE DATABASE
         // This prevents the 'getMenuItems' crash on procedure call blocks

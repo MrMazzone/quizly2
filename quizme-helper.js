@@ -854,6 +854,13 @@ function showQuiz(quizIdentifier) {
       button.innerHTML = "Submit";
     }
   }
+  // Clear previous quiz's hint and feedback when switching questions
+  var hintEl = maindocument.getElementById('hint_html');
+  if (hintEl) hintEl.innerHTML = '';
+  var resultEl = maindocument.getElementById('quiz_result');
+  if (resultEl) resultEl.innerHTML = '&nbsp;';
+  answer_tries = 0;
+
   Blockly.Quizme.quizName = quizname;
   Blockly.Quizme.description = Blockly.Quizme[quizname].description;
   Blockly.Quizme.question_type = Blockly.Quizme[quizname].problem_type;

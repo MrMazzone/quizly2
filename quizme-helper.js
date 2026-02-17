@@ -712,7 +712,7 @@ function showJavaScript() {
 	window.parent.Alert.render("Sorry, Javascript code is not available \nfor this problem.");
     } else {
       Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
-      var  blocks  = Blockly.getMainWorkspace().topBlocks_;
+      var  blocks  = Blockly.getMainWorkspace().getTopBlocks(false);
       var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());  
       code = parseCode(code);
 
@@ -895,7 +895,7 @@ function showQuiz(quizIdentifier) {
   // For boolean and numeric answer types, the solution has to be
   //  calculated after the blocks are rendered.
   if (Blockly.Quizme.answerType == 'boolean' || Blockly.Quizme.answerType == EVAL_EXPR) {
-    var block = Blockly.getMainWorkspace().topBlocks_[0];
+    var block = Blockly.getMainWorkspace().getTopBlocks(false)[0];
     Blockly.Quizme.solution = "" + Blockly.Quizme.eval(block);
   }
 }
@@ -1627,7 +1627,7 @@ Blockly.Quizme.setupFunctionDefinition = function(qname, helperObj, blocks) {
   // Get the workspace blocks and  definitions and convert it to code.
   Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
   if (!blocks) 
-    blocks  = Blockly.getMainWorkspace().topBlocks_;
+    blocks  = Blockly.getMainWorkspace().getTopBlocks(false);
   var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());  
   //  return code;
   var blockly_defs = Blockly.JavaScript.definitions_[fnName];
@@ -1825,7 +1825,7 @@ Blockly.Quizme.setupProcedureDefinition = function(qname, helperObj, blocks) {
   }
   Blockly.JavaScript.init(Blockly.common.getMainWorkspace());
   if (!blocks)
-    blocks  = Blockly.getMainWorkspace().topBlocks_;
+    blocks  = Blockly.getMainWorkspace().getTopBlocks(false);
   var code = Blockly.JavaScript.workspaceToCode(Blockly.common.getMainWorkspace());
   return code; 
 }

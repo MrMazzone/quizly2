@@ -87,8 +87,8 @@ Blockly.Quizme.addComponent = function(json, name, uid) {
   // 1. Map Events
   for (var i = 0; i < prototype.events.length; i++) {
     var event = prototype.events[i];
-    // Ensure parameters is an array (even if empty) to prevent 'undefined' crashes
-    if (!event.parameters) event.parameters = [];
+    // blockly-all.js accesses .parameters, but JSON uses .params — bridge the gap
+    if (!event.parameters) event.parameters = event.params || [];
     Blockly.ComponentTypes[typeName].eventDictionary[event.name] = event;
   }
 
@@ -96,6 +96,8 @@ Blockly.Quizme.addComponent = function(json, name, uid) {
   for (var j = 0; j < prototype.methods.length; j++) {
     var method = prototype.methods[j];
     if (!method.params) method.params = [];
+    // blockly-all.js accesses .parameters, but JSON uses .params — bridge the gap
+    if (!method.parameters) method.parameters = method.params;
     Blockly.ComponentTypes[typeName].methodDictionary[method.name] = method;
   }
 

@@ -871,7 +871,7 @@ function showQuiz(quizIdentifier) {
   Blockly.Quizme.resultHTML = Blockly.Quizme[quizname].result_html;
   Blockly.Quizme.hintCounter = 0;
   Blockly.Quizme.hints = Blockly.Quizme[quizname].hints;
-  Blockly.Quizme.solution = Blockly.Quizme[quizname].Xmlsolution;
+  Blockly.Quizme.solution = Blockly.Quizme[quizname].xmlsolution;
 
   // NOTE: Can eval be avoided here?
   Blockly.Quizme.xmlGenerator = eval( '(' + Blockly.Quizme[quizname].xmlgenerator + ')');
@@ -1529,6 +1529,10 @@ Blockly.Quizme.evaluateXmlBlocksAnswerType = function(helperObj, solution, mappi
   // HACK:  Replace 'logic_false' with logic_boolean' in user's answer
   resultXml = Blockly.Quizme.falseToBoolean(resultXml);
 
+  // New Blockly adds xmlns and is_generic attributes to mutation elements
+  // that old solution XML doesn't have. Strip them for comparison.
+  resultXml = Blockly.Quizme.normalizeMutationAttrs(resultXml);
+
   if (mappings) {
     solution = mapQuizVariables(helperObj, solution, mappings);
   } else if (helperObj[helperObj.quizName].dictionary) {
@@ -1538,6 +1542,7 @@ Blockly.Quizme.evaluateXmlBlocksAnswerType = function(helperObj, solution, mappi
   solution = Blockly.Quizme.removeXY(solution);
   solution = Blockly.Quizme.removeIDs(solution);
   solution = Blockly.Quizme.removeTag("xml", solution);
+  solution = Blockly.Quizme.normalizeMutationAttrs(solution);
 
   var result = resultXml.indexOf(solution) != -1;
   Blockly.Quizme.giveFeedback(result, 
@@ -2082,6 +2087,17 @@ Blockly.Quizme.removeIDs = function(str) {
   }
   return str;
 }
+
+/**
+ * Strips xmlns and is_generic attributes from mutation elements.
+ * The new Blockly adds these attributes but old solution XML doesn't have them.
+ */
+Blockly.Quizme.normalizeMutationAttrs = function(str) {
+  if (!str || typeof str !== 'string') return str;
+  str = str.replace(/ xmlns="http:\/\/www\.w3\.org\/1999\/xhtml"/g, '');
+  str = str.replace(/ is_generic="false"/g, '');
+  return str;
+};
 
 /**
  * HACK: Replace logic_false with logic_boolean

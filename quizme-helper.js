@@ -872,6 +872,8 @@ function showQuiz(quizIdentifier) {
   if (hintEl) hintEl.innerHTML = '';
   var resultEl = maindocument.getElementById('quiz_result');
   if (resultEl) resultEl.innerHTML = '&nbsp;';
+  var link_html = maindocument.getElementById('link_html');
+  if (link_html) link_html.innerHTML = "";
   answer_tries = 0;
 
   Blockly.Quizme.quizName = quizname;
@@ -1310,6 +1312,17 @@ workspace.getProcedureMap = function() { return dummyProcedureMap; };
     }
   } else {
     console.error("RAM: Missing XML in actualData object.");
+  }
+  // add in show link
+  var link_html = maindocument.getElementById('link_html');
+  if (link_html) {
+    if (ED_X) {
+      link_html.style.visibility = "hidden";
+    } else if (Blockly.Quizme.description.indexOf("href") != -1) {  // Show only if there's href
+       link_html.innerHTML = "Tutorial: " + Blockly.Quizme.description;
+    } else {
+       link_html.innerHTML = "";
+    }
   }
 }
 

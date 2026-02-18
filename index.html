@@ -78,6 +78,19 @@ function JavaScriptAlert(){
 var Alert = new JavaScriptAlert();
 var DEBUG = false;
 
+// Read quizname from URL query parameter and set it in the hidden input field
+(function() {
+  var urlParams = new URLSearchParams(window.location.search);
+  var quizname = urlParams.get('quizname');
+  if (quizname) {
+    var quiznameInput = document.getElementById('quizname');
+    if (quiznameInput) {
+      quiznameInput.value = quizname;
+      if (DEBUG) console.log("DEBUG index.html: Set quizname from URL to: " + quizname);
+    }
+  }
+})();
+
 function showJavascript() {
   if (DEBUG) console.log("ShowJavaScript");
   Blockly.hello('showjavascript');
